@@ -11,6 +11,78 @@ from autobahn.twisted.websocket import WebSocketServerProtocol
 
 from moneysocket.bolt11 import Bolt11
 
+###############################################################################
+
+#class MoneysocketTransport(object):
+#    def __init__(self):
+#        pass
+#
+#
+#class WebsocketTransport(MoneysocketTransport):
+#    def __init__(self, incoming=True, outgoing=True):
+#        super().__init__()
+#        self.incoming = incoming
+#        self.outgoing = outgoing
+#
+#
+#class WebRTCTransport(MoneysocketTransport):
+#    def __init__(self):
+#        super().__init__()
+#
+#    def gen_signal(self):
+#        signal = None
+#        return signal
+#
+#    def connect(self, signal):
+#        pass
+#
+################################################################################
+#
+#class MoneysocketApp(object):
+#    def __init__(self, transport, lightning_node, state_db_filename):
+#        self.roles = []
+#        self.transport = transport
+#        self.lightning_node = lightning_node
+#        pass
+#
+#    def add_role(self, role):
+#        self.roles.append(role)
+#
+#
+#    def listen_incoming(self, bind, port):
+#        self.transport.create_listner(bind, port)
+#        pass
+#
+#    def connect_outgoing(self, url):
+#        self.transport.connect_outgoing(url)
+#        pass
+#
+################################################################################
+#
+#class MoneysocketRole(object):
+#    """ common to roles of LN WALLET or LN SERVICE """
+#    def __init__(self, app, transport):
+#        self.app = app
+#        self.transport = transport
+#        self.uuid = uuid.uuid4()
+#        pass
+#
+#
+#class MoneysocketWallet(MoneysocketRole):
+#    """ LN WALLET """
+#    def __init__(self, app, transport):
+#        super().__init__(app, transport)
+#
+#
+#class MoneysocketService(MoneysocketRole):
+#    """ LN SERVICE """
+#    def __init__(self, app, transport):
+#        super().__init__(app, transport)
+
+
+###############################################################################
+
+
 class MoneysocketClient(WebSocketServerProtocol):
 
     ###########################################################################

@@ -33,6 +33,9 @@ USE_WSS = False
 
 ###############################################################################
 
+
+###############################################################################
+
 def setup_websocket_server(state_filename, port):
     if USE_WSS:
         contextFactory = ssl.DefaultOpenSSLContextFactory(
