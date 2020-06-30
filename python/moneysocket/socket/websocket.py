@@ -4,6 +4,7 @@
 
 import logging
 import uuid
+import json
 
 from OpenSSL import SSL
 
@@ -17,104 +18,99 @@ from autobahn.twisted.websocket import connectWS
 from autobahn.twisted.websocket import WebSocketClientFactory
 from autobahn.twisted.websocket import WebSocketClientProtocol
 
-from moneysocket.socket.socket import MoneysocketSocket, MoneysocketTransport
+from moneysocket.socket.socket import MoneysocketSocket, MoneysocketInterconnect
 
 
-
-class WebsocketTransport(MoneysocketTransport):
-    def __init__(self, incoming=True, outgoing=True):
-        super().__init__()
-        self.incoming = incoming
-        self.outgoing = outgoing
-
+class WebsocketInterconnect(MoneysocketInterconnect):
+    def __init__(self, new_socket_cb, socket_close_cb):
+        super().__init__(new_socket_cb, socket_close_cb)
+        self.incoming = []
+        self.outgoing = []
 
     def listen(self, bind, port, use_tls=None):
-        pass
+        i = IncomingWebsocketInterconnect(self._new_socket, self._socket_close)
+        self.incoming.append(i)
+        i.listen(bind, port, use_tls=use_tls)
+
+    def connect(self, url):
+        print("connecT")
+        o = OutgoingWebsocketInterconnect(self._new_socket, self._socket_close)
+        self.outgoing.append(o)
+        o.connect(url)
+
+    def initiate_close(self):
+        for i in self.incoming:
+            i.initiate_close()
+        for o in self.outgoing:
+            o.initiate_close()
 
 ###############################################################################
 
 class IncomingSocket(WebSocketServerProtocol):
+    def __init__(self):
+        super().__init__()
+        self.uuid = uuid.uuid4()
+        self.ms = None
 
     def onConnecting(self, transport_details):
         logging.info("WebSocket connecting: %s" % transport_details)
         pass
 
     def onConnect(self, request):
-        self.uuid = uuid.uuid4()
-        self.ms_transport = self.factory.ms_transport
-
-        print(self.factory)
         logging.info("Client connecting: {0}".format(request.peer))
-
-        self.ms_transport.connect(self, request)
 
     def onOpen(self):
         logging.info("WebSocket connection open.")
-        self.ms_transport.open(self.uuid)
+        self.ms = MoneysocketSocket()
+        self.ms._register_initiate_close_func(self.initiate_close)
+        self.ms._register_initiate_send_func(self.initiate_send)
+        self.factory.ms_interconnect._new_socket(self.ms)
 
     def onMessage(self, payload, isBinary):
         if isBinary:
-            logging.info(
-                "Binary message received: {0} bytes".format( len(payload)))
-            logging.info("Binary message received: %s" % payload.hex())
+            self.handle_binary(payload)
         else:
-            decoded = payload.decode('utf8')
-            logging.info(
-                "Text message received: {0}".format(decoded))
+            self.handle_text(payload)
 
     def onClose(self, wasClean, code, reason):
         logging.info("WebSocket connection closed: {0}".format(reason))
+        self.factory.ms_interconnect._socket_close(self.ms)
+        self.ms = None
 
     ##########################################################################
 
-    def close(self):
-        self.close()
+    def initiate_close(self):
+        super().sendClose()
 
-    def send(self, msg_dict):
-        self.sendMessage(json.dumps(msg_dict).encode("utf8"))
+    def initiate_send(self, msg_dict):
+        s = self.sendMessage(json.dumps(msg_dict).encode("utf8"))
+        logging.info("sent message, got: %s" % s)
 
     def handle_binary(self, payload):
         logging.info("binary payload: %d bytes" % len(payload))
 
     def handle_text(self, payload):
         logging.info("text payload: %s" % payload.decode("utf8"))
-        self.ms.recv_msg(json.loads(payload.decode("utf8")))
+        self.ms._msg_recv(json.loads(payload.decode("utf8")))
 
 
-
-class IncomingWebsocketTransport(WebsocketTransport):
-    def __init__(self, bind, port, use_tls=None):
-        super().__init__()
-
-        self.connections = {}
+class IncomingWebsocketInterconnect(MoneysocketInterconnect):
+    def listen(self, bind, port, use_tls=None):
         if use_tls:
             contextFactory = ssl.DefaultOpenSSLContextFactory(
                 use_tls['key_file'], use_tls['cert_file'],
                 sslmethod=SSL.TLSv1_2_METHOD)
             factory = WebSocketServerFactory(u"wss://%s:%s" % (bind, port))
             factory.protocol = IncomingSocket
-            factory.ms_transport = self
+            factory.ms_interconnect = self
             listenWS(factory, contextFactory)
             print("listening tls")
         else:
             factory = WebSocketServerFactory(u"ws://%s:%s" % (bind, port))
             factory.protocol = IncomingSocket
-            factory.ms_transport = self
+            factory.ms_interconnect = self
             reactor.listenTCP(port, factory)
             print("listening clear")
-
-    def connect(self, connection, request):
-        self.connections[connection.uuid] = connection
-
-    def open(self, uuid):
-        pass
-
-    def message(self, uuid, payload, isBinary):
-        pass
-
-    def close(self, uuid, wasClean, code, reason):
-        if uuid in self.connections.keys():
-            del self.connections[uuid]
 
 
 ###############################################################################
@@ -123,7 +119,6 @@ class OutgoingSocket(WebSocketClientProtocol):
 
     def onConnecting(self, transport_details):
         logging.info("WebSocket connecting: %s" % transport_details)
-        pass
 
     def onConnect(self, response):
         logging.info("WebSocket connection connect: %s" % response)
@@ -131,8 +126,9 @@ class OutgoingSocket(WebSocketClientProtocol):
     def onOpen(self):
         logging.info("WebSocket connection open.")
         self.ms = MoneysocketSocket()
-        self.ms.set_close_func(self.close)
-        self.factory.transport.socket_spawn(self.ms)
+        self.ms._register_initiate_close_func(self.initiate_close)
+        self.ms._register_initiate_send_func(self.initiate_send)
+        self.factory.ms_interconnect._new_socket(self.ms)
         pass
 
     def onMessage(self, payload, isBinary):
@@ -143,41 +139,47 @@ class OutgoingSocket(WebSocketClientProtocol):
 
     def onClose(self, wasClean, code, reason):
         logging.info("WebSocket connection closed: {0}".format(reason))
+        self.factory.ms_interconnect._socket_close(self.ms)
         self.ms = None
 
     ##########################################################################
 
-    def close(self):
-        self.close()
+    def initiate_close(self):
+        super().sendClose()
 
-    def send(self, msg_dict):
-        self.sendMessage(json.dumps(msg_dict).encode("utf8"))
+    def initiate_send(self, msg_dict):
+        s = self.sendMessage(json.dumps(msg_dict).encode("utf8"))
+        logging.info("sent message, got: %s" % s)
 
     def handle_binary(self, payload):
         logging.info("binary payload: %d bytes" % len(payload))
 
     def handle_text(self, payload):
         logging.info("text payload: %s" % payload.decode("utf8"))
-        self.ms.recv_msg(json.loads(payload.decode("utf8")))
+        self.ms._msg_recv(json.loads(payload.decode("utf8")))
 
     ##########################################################################
 
 
-class OutgoingWebsocketTransport(MoneysocketTransport):
-    def __init__(self):
-        super().__init__()
-
-
+class OutgoingWebsocketInterconnect(MoneysocketInterconnect):
     def connect(self, ws_url):
+        logging.info("connect")
         factory = WebSocketClientFactory(ws_url)
+        logging.info("factory: %s" % factory)
         factory.protocol = OutgoingSocket
-        factory.transport = self
-        connectWS(factory)
+        logging.info("factory 2 : %s" % factory)
+        factory.ms_interconnect = self
+        logging.info("factory 3h: %s" % factory)
+        logging.info("connecting")
+        c = connectWS(factory, timeout=10)
+        logging.info("connect: %s" % c)
+        # TODO - track pending connection attempts
 
     def connect_tls(self, ws_url):
+        logging.info("connect: %s" % c)
         factory = WebSocketClientFactory(ws_url)
         factory.protocol = OutgoingSocket
-        factory.transport = self
+        factory.ms_interconnect = self
         contextFactory = ssl.ClientContextFactory()
         connectWS(factory, contextFactory)
 
